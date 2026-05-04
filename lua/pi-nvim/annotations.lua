@@ -282,16 +282,19 @@ function M.open_input(opts)
   local closed = false
   local close -- forward declaration (LuaJIT needs this before submit captures it)
 
+  local submitted = false
+
   local function submit()
-    if closed then return end
+    if closed or submitted then return end
+    submitted = true
     local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
     local text = table.concat(lines, "\n")
     -- Remove leading and trailing blank lines
     text = text:gsub("^\n+", ""):gsub("\n+$", "")
-    close()
     if text ~= "" then
       opts.on_submit(text)
     end
+    close()
   end
 
   function close()
@@ -302,10 +305,10 @@ function M.open_input(opts)
     pcall(vim.api.nvim_buf_delete, buf, { force = true })
   end
 
-  -- Key mappings: Enter to submit, Ctrl-C to cancel
+  -- Key mappings: Ctrl+Enter to submit, Ctrl-C to cancel
   -- Escape works normally for mode switching (insert<->normal)
-  vim.keymap.set("i", "<CR>", submit, { buffer = buf, noremap = true, silent = true })
-  vim.keymap.set("n", "<CR>", submit, { buffer = buf, noremap = true, silent = true })  -- Enter to submit in normal mode
+  -- Enter inserts newline (default behavior)
+  vim.keymap.set({ "i", "n" }, "<C-CR>", submit, { buffer = buf, noremap = true, silent = true })
   vim.keymap.set({ "i", "n" }, "<C-c>", close, { buffer = buf, noremap = true, silent = true })
 end
 

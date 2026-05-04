@@ -202,10 +202,10 @@ function M.open(opts)
 
   local kopts = { buffer = input_buf, noremap = true, silent = true }
 
-  -- Key mappings: Enter to submit, Ctrl-C to cancel
+  -- Key mappings: Ctrl+Enter to submit, Ctrl-C to cancel
   -- Escape works normally for mode switching (insert<->normal)
-  vim.keymap.set("i", "<CR>", send, kopts)
-  vim.keymap.set("n", "<CR>", send, kopts)  -- Enter to send in normal mode
+  -- Enter inserts newline (default behavior)
+  vim.keymap.set({ "i", "n" }, "<C-CR>", send, kopts)
   vim.keymap.set({ "i", "n" }, "<C-c>", close, kopts)  -- Ctrl-C to cancel
   vim.keymap.set({ "i", "n" }, "<Tab>", function()
     if not selection then
