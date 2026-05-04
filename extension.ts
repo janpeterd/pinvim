@@ -5,30 +5,39 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 
 /**
- * pi-nvim: Exposes a unix socket so external tools (like a neovim plugin)
- * can send prompts/context into a running interactive pi session.
+ * pi-nvim: Bridge between pi coding agent and Neovim.
  *
- * Repo: https://github.com/carderne/pi-nvim
+ * Features:
+ *   - Unix socket server so Neovim can send prompts/annotations into pi
+ *   - /nvim [file] command — spawns Neovim in a tmux split (defaults to Neogit
+ *     dashboard so you can quickly review changes)
+ *   - /nvim-annotations — loads annotations received from Neovim into the pi
+ *     editor for review/editing before sending
  *
- * Protocol: newline-delimited JSON over a unix socket.
+ * Protocol (newline-delimited JSON over unix socket):
  *
- * Commands:
- *   { "type": "prompt", "message": "..." }
- *   { "type": "prompt", "message": "...", "images": [...] }
- *   { "type": "ping" }
+ *   → { "type": "prompt", "message": "..." }
+ *   → { "type": "annotations", "annotations": [...] }
+ *   → { "type": "ping" }
  *
- * Responses:
- *   { "ok": true }
- *   { "ok": true, "type": "pong" }
- *   { "ok": false, "error": "..." }
- *
- * Socket path: /tmp/pi-nvim-<hash-of-cwd>.sock
- * A symlink at /tmp/pi-nvim-latest.sock always points to the most recently
- * started session, so neovim can just connect there if there's only one.
- *
- * The socket path for a given cwd is also written to /tmp/pi-nvim-sockets/<hash>
- * as a plain text file containing the cwd, so neovim can list all running sessions.
+ *   ← { "ok": true }
+ *   ← { "ok": true, "type": "pong" }
+ *   ← { "ok": false, "error": "..." }
  */
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+interface Annotation {
+  file: string;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  text: string;
+  fileType: string;
+  code?: string;
+}
+
+// ── Socket helpers ───────────────────────────────────────────────────────────
 
 function cwdHash(cwd: string): string {
   return crypto.createHash("md5").update(cwd).digest("hex").slice(0, 12);
@@ -41,20 +50,60 @@ function getSocketPath(cwd: string): string {
 const SOCKETS_DIR = "/tmp/pi-nvim-sockets";
 const LATEST_LINK = "/tmp/pi-nvim-latest.sock";
 
+// ── Annotation formatting ────────────────────────────────────────────────────
+
+function formatAnnotations(annotations: Annotation[]): string {
+  if (annotations.length === 0) return "";
+
+  // Group by file
+  const byFile = new Map<string, Annotation[]>();
+  for (const a of annotations) {
+    const existing = byFile.get(a.file) || [];
+    existing.push(a);
+    byFile.set(a.file, existing);
+  }
+
+  let text = "## Annotations from Neovim\n\n";
+
+  for (const [file, anns] of byFile) {
+    text += `### ${file}\n\n`;
+    for (const a of anns) {
+      const range =
+        a.startLine === a.endLine
+          ? `L${a.startLine}`
+          : `L${a.startLine}-L${a.endLine}`;
+      text += `**${range}**: ${a.text}\n`;
+      if (a.code && a.code.trim()) {
+        const ft = a.fileType || "";
+        text += `\n\`\`\`${ft}\n${a.code.trim()}\n\`\`\`\n\n`;
+      } else {
+        text += "\n";
+      }
+    }
+  }
+
+  return text;
+}
+
+// ── Extension ────────────────────────────────────────────────────────────────
+
 export default function (pi: ExtensionAPI) {
   let server: net.Server | null = null;
   let socketPath: string | null = null;
 
+  // Stored annotations received from Neovim (loaded into editor via /nvim-annotations)
+  let lastAnnotations: Annotation[] = [];
+
+  // ── Socket server ──────────────────────────────────────────────────────
+
   pi.on("session_start", async (_event, ctx) => {
     const cwd = ctx.cwd;
-    // Ensure sockets directory exists
     try {
       fs.mkdirSync(SOCKETS_DIR, { recursive: true });
     } catch {}
 
     socketPath = getSocketPath(cwd);
 
-    // Clean up stale socket
     try {
       fs.unlinkSync(socketPath);
     } catch {}
@@ -68,7 +117,7 @@ export default function (pi: ExtensionAPI) {
           const line = buffer.slice(0, newlineIdx).trim();
           buffer = buffer.slice(newlineIdx + 1);
           if (!line) continue;
-          handleMessage(line, conn, cwd);
+          handleMessage(line, conn, ctx);
         }
       });
       conn.on("error", () => {});
@@ -83,10 +132,9 @@ export default function (pi: ExtensionAPI) {
         fs.symlinkSync(socketPath!, LATEST_LINK);
       } catch {}
 
-      // Register in sockets directory for discovery
+      // Write discovery info
       try {
         fs.mkdirSync(SOCKETS_DIR, { recursive: true });
-        // Write a manifest file alongside the socket for discovery
         fs.writeFileSync(
           socketPath + ".info",
           JSON.stringify({
@@ -103,7 +151,11 @@ export default function (pi: ExtensionAPI) {
     });
   });
 
-  function handleMessage(raw: string, conn: net.Socket, _cwd: string) {
+  function handleMessage(
+    raw: string,
+    conn: net.Socket,
+    ctx: { ui: any; cwd: string },
+  ) {
     try {
       const msg = JSON.parse(raw);
 
@@ -113,17 +165,73 @@ export default function (pi: ExtensionAPI) {
       }
 
       if (msg.type === "prompt" && typeof msg.message === "string") {
-        // Exit kitty's scrollback viewer by switching to private screen mode
-        // and back. This snaps to the bottom without clearing scrollback history.
+        // Exit kitty's scrollback viewer
         process.stdout.write("\x1b[?1049h\x1b[?1049l");
         pi.sendUserMessage(msg.message);
         respond(conn, { ok: true });
         return;
       }
 
+      if (
+        msg.type === "annotations" &&
+        Array.isArray(msg.annotations)
+      ) {
+        const annotations: Annotation[] = msg.annotations.map((a: any) => ({
+          file: a.file || "",
+          filePath: a.filePath || "",
+          startLine: a.startLine || 0,
+          endLine: a.endLine || 0,
+          text: a.text || "",
+          fileType: a.fileType || "",
+          code: a.code || "",
+        }));
+
+        lastAnnotations = annotations;
+
+        // Pre-fill the pi editor so the user can review before sending
+        tryPreFillEditor(annotations, ctx);
+
+        const count = annotations.length;
+        respond(conn, {
+          ok: true,
+          count,
+          message: `Received ${count} annotation(s). Use /nvim-annotations to load them into the editor.`,
+        });
+        return;
+      }
+
       respond(conn, { ok: false, error: `Unknown command type: ${msg.type}` });
     } catch (e: any) {
       respond(conn, { ok: false, error: `Parse error: ${e.message}` });
+    }
+  }
+
+  /**
+   * Append formatted annotations to the pi editor so the user can
+   * review and edit before pressing Enter. Preserves any existing editor
+   * content (prepends a double newline separator).
+   * Falls back to a notification with instructions to use /nvim-annotations.
+   */
+  function tryPreFillEditor(annotations: Annotation[], ctx: { ui: any; cwd: string }) {
+    const formatted = formatAnnotations(annotations);
+    if (!formatted) return;
+
+    try {
+      const current = ctx.ui.getEditorText();
+      const newText = current
+        ? current + "\n\n" + formatted
+        : formatted;
+      ctx.ui.setEditorText(newText);
+      ctx.ui.notify(
+        `${annotations.length} annotation(s) appended to editor. Review and press Enter to send.`,
+        "info",
+      );
+    } catch {
+      // If getEditorText/setEditorText fails, notify instead
+      ctx.ui.notify(
+        `${annotations.length} annotation(s) received from Neovim. Use /nvim-annotations to append them to the editor.`,
+        "info",
+      );
     }
   }
 
@@ -142,7 +250,6 @@ export default function (pi: ExtensionAPI) {
       fs.unlinkSync(socketPath!);
     } catch {}
     try {
-      // Clean up latest symlink if it points to us
       const target = fs.readlinkSync(LATEST_LINK);
       if (target === socketPath) fs.unlinkSync(LATEST_LINK);
     } catch {}
@@ -155,8 +262,9 @@ export default function (pi: ExtensionAPI) {
     cleanup();
   });
 
-  // Also clean up on process exit
   process.on("exit", cleanup);
+
+  // ── Commands ────────────────────────────────────────────────────────────
 
   pi.registerCommand("pi-nvim-info", {
     description: "Show pi-nvim socket path",
@@ -165,6 +273,88 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Socket: ${socketPath}`, "info");
       } else {
         ctx.ui.notify("pi-nvim not active", "warning");
+      }
+    },
+  });
+
+  pi.registerCommand("nvim-annotations", {
+    description: "Load Neovim annotations into the editor for review",
+    handler: async (_args, ctx) => {
+      if (lastAnnotations.length === 0) {
+        ctx.ui.notify(
+          "No annotations received from Neovim yet. Annotate code in Neovim and close it to send them here.",
+          "warning",
+        );
+        return;
+      }
+
+      const formatted = formatAnnotations(lastAnnotations);
+      if (!formatted) {
+        ctx.ui.notify("No annotation content to load", "warning");
+        return;
+      }
+
+      const current = ctx.ui.getEditorText();
+      const newText = current ? current + "\n\n" + formatted : formatted;
+      ctx.ui.setEditorText(newText);
+      ctx.ui.notify(
+        `Appended ${lastAnnotations.length} annotation(s) to editor. Edit and press Enter to send.`,
+        "info",
+      );
+    },
+  });
+
+  pi.registerCommand("nvim", {
+    description:
+      "Open Neovim in a tmux split. Defaults to Neogit dashboard to review changes. Use /nvim <file> to open a specific file.",
+    handler: async (args, ctx) => {
+      if (!ctx.hasUI) {
+        ctx.ui.notify("/nvim requires interactive mode", "error");
+        return;
+      }
+
+      if (!process.env.TMUX) {
+        ctx.ui.notify(
+          "Not inside a tmux session. Start pi inside tmux first.",
+          "error",
+        );
+        return;
+      }
+
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      let vertical = false;
+      const fileArgs: string[] = [];
+
+      for (const part of parts) {
+        if (part === "-v" || part === "--vertical") {
+          vertical = true;
+        } else if (part === "-h" || part === "--horizontal") {
+          vertical = false;
+        } else {
+          fileArgs.push(part);
+        }
+      }
+
+      const tmuxArgs = ["split-window"];
+      tmuxArgs.push(vertical ? "-v" : "-h");
+
+      if (fileArgs.length > 0) {
+        tmuxArgs.push("nvim", ...fileArgs);
+      } else {
+        // Default: open Neogit dashboard for reviewing changes
+        // Falls back to plain nvim if Neogit is not installed
+        tmuxArgs.push("nvim", "-c", "Neogit");
+      }
+
+      try {
+        await pi.exec("tmux", tmuxArgs);
+        const target = fileArgs.length > 0 ? fileArgs.join(" ") : "Neogit dashboard";
+        ctx.ui.notify(
+          `Neovim opened in ${vertical ? "vertical" : "horizontal"} split (${target}). Annotate with :PiAnnotate, close to send.`,
+          "info",
+        );
+      } catch (err: any) {
+        ctx.ui.notify(`Failed to spawn Neovim: ${err.message}`, "error");
       }
     },
   });

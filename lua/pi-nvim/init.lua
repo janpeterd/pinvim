@@ -59,6 +59,110 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("PiSessions", function()
     M.list_sessions()
   end, { desc = "List running pi sessions" })
+
+  -- ── Annotation commands ──────────────────────────────────────────────
+  local annotations = require("pi-nvim.annotations")
+
+  vim.api.nvim_create_user_command("PiAnnotate", function(args)
+    local bufnr = vim.api.nvim_get_current_buf()
+    local start_line, end_line
+    if args.range == 2 then
+      start_line = args.line1
+      end_line = args.line2
+    else
+      start_line = vim.fn.line(".")
+      end_line = start_line
+    end
+    annotations.open_input({
+      start_line = start_line,
+      end_line = end_line,
+      on_submit = function(text)
+        local item = annotations.add(bufnr, start_line, end_line, text)
+        vim.notify(string.format("Annotation [%d] added at L%d", item.id, start_line), vim.log.levels.INFO)
+      end,
+    })
+  end, { range = true, desc = "Annotate current line or visual selection" })
+
+  vim.api.nvim_create_user_command("PiAnnotations", function()
+    annotations.show_quickfix()
+  end, { desc = "Show all annotations in quickfix list" })
+
+  vim.api.nvim_create_user_command("PiClearAnnotation", function(args)
+    local id = tonumber(args.args)
+    if not id then
+      vim.notify("Usage: PiClearAnnotation <id>", vim.log.levels.ERROR)
+      return
+    end
+    local removed = annotations.remove(vim.api.nvim_get_current_buf(), id)
+    if removed then
+      vim.notify(string.format("Annotation [%d] removed", id), vim.log.levels.INFO)
+    else
+      vim.notify(string.format("Annotation [%d] not found in current buffer", id), vim.log.levels.WARN)
+    end
+  end, { nargs = 1, desc = "Remove annotation by id from current buffer" })
+
+  vim.api.nvim_create_user_command("PiClearAllAnnotations", function()
+    local count = annotations.count()
+    annotations.clear_all()
+    vim.notify(string.format("Cleared %d annotation(s)", count), vim.log.levels.INFO)
+  end, { desc = "Remove all annotations from all buffers" })
+
+  vim.api.nvim_create_user_command("PiSendAnnotations", function()
+    local count = annotations.count()
+    if count == 0 then
+      vim.notify("No annotations to send", vim.log.levels.WARN)
+      return
+    end
+    annotations.send_to_pi(function(success)
+      if success then
+        vim.notify(string.format("Sent %d annotation(s) to pi. Use /nvim-annotations in pi to load them.", count), vim.log.levels.INFO)
+      else
+        vim.notify("Failed to send annotations to pi", vim.log.levels.ERROR)
+      end
+    end)
+  end, { desc = "Send all annotations to pi" })
+
+  -- Keybindings for annotations
+  vim.keymap.set("n", "<leader>pa", ":PiAnnotate<CR>", { silent = true, desc = "Annotate line" })
+  vim.keymap.set("v", "<leader>pa", ":PiAnnotate<CR>", { silent = true, desc = "Annotate selection" })
+  vim.keymap.set("n", "<leader>pl", ":PiAnnotations<CR>", { silent = true, desc = "List annotations" })
+  vim.keymap.set("n", "<leader>ps", ":PiSendAnnotations<CR>", { silent = true, desc = "Send annotations to pi" })
+  vim.keymap.set("n", "<leader>pc", ":PiClearAllAnnotations<CR>", { silent = true, desc = "Clear all annotations" })
+
+  -- Autocommand: send annotations to pi when Neovim closes.
+  -- Uses vim.uv pipe with vim.wait to ensure the write completes before exit.
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    callback = function()
+      local all = annotations.get_all()
+      if #all == 0 then return end
+      local sock_path = M.get_socket_path()
+      if not sock_path then return end
+
+      local payload = vim.json.encode({
+        type = "annotations",
+        annotations = annotations.serialize_all(),
+      }) .. "\n"
+
+      local sent = false
+      local client = vim.uv.new_pipe(false)
+      if not client then return end
+
+      client:connect(sock_path, function(err)
+        if err then
+          sent = true
+          return
+        end
+        client:write(payload, function()
+          client:close()
+          sent = true
+        end)
+      end)
+
+      -- Block until sent or timeout (5s)
+      vim.wait(5000, function() return sent end)
+    end,
+    desc = "Send pi-nvim annotations to pi on exit",
+  })
 end
 
 --- Resolve the socket path to use.
@@ -191,7 +295,10 @@ function M.prompt(message)
     M.send_raw({ type = "prompt", message = message }, function(err, resp)
       if err then return end
       if resp and resp.ok then
-        vim.notify("Sent to pi", vim.log.levels.INFO)
+        local annotations = require("pi-nvim.annotations")
+        local count = annotations.count()
+        local suffix = count > 0 and string.format(" (%d annotation(s) pending)", count) or ""
+        vim.notify("Sent to pi" .. suffix, vim.log.levels.INFO)
       else
         vim.notify("pi error: " .. (resp and resp.error or "unknown"), vim.log.levels.ERROR)
       end

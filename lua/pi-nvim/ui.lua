@@ -41,6 +41,8 @@ function M.open(opts)
   local buf_lines = vim.api.nvim_buf_get_lines(source_buf, 0, -1, false)
 
   -- Build info lines
+  local annotations = require("pi-nvim.annotations")
+  local annotation_count = annotations.count()
   local file_info = "File: " .. (rel_file ~= "" and rel_file or "(no file)")
   local context_info
   if selection then
@@ -49,10 +51,13 @@ function M.open(opts)
   else
     context_info = "Send buffer: [ ] (Tab to toggle)"
   end
+  local annotation_info = annotation_count > 0
+    and string.format("Annotations: %d pending", annotation_count)
+    or "Annotations: none"
 
   -- Layout
   local width = math.min(72, math.floor(vim.o.columns * 0.5))
-  local info_height = 2
+  local info_height = 3
   local max_input_height = 6
   local gap = 0 -- no gap between bubbles
   local top_row = math.floor((vim.o.lines - (info_height + 2 + gap + max_input_height + 2)) / 2)
@@ -65,13 +70,13 @@ function M.open(opts)
   vim.api.nvim_set_hl(0, "PiNvimBorder", { fg = accent_fg, bg = normal_hl.bg })
   vim.api.nvim_set_hl(0, "PiNvimTitle", { fg = accent_fg, bg = normal_hl.bg })
 
-
   -- Top bubble: info
   local info_buf = vim.api.nvim_create_buf(false, true)
   vim.bo[info_buf].buftype = "nofile"
   vim.api.nvim_buf_set_lines(info_buf, 0, -1, false, {
     " " .. file_info,
     " " .. context_info,
+    " " .. annotation_info,
   })
   vim.bo[info_buf].modifiable = false
 

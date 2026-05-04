@@ -1,13 +1,17 @@
 {
-  "name": "pi-nvim",
-  "version": "0.2.0",
-  "description": "Bridge between pi coding agent and Neovim",
+  "name": "pinvim",
+  "version": "0.1.0",
+  "description": "Bridge between pi coding agent and Neovim — spawn Neovim from pi in tmux, annotate code without touching files, send back to pi",
   "keywords": [
     "pi-package",
-    "pi-extension"
+    "pi-extension",
+    "neovim",
+    "nvim",
+    "annotation"
   ],
   "files": [
     "extension.ts",
+    "lua/",
     "package.json",
     "README.md"
   ],
@@ -22,21 +26,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/carderne/pi-nvim.git"
+    "url": "git+https://github.com/janpeterd/pinvim.git"
   },
-  "author": "Chris Arderne <chris@rdrn.me>",
+  "author": "Jan Peter Drees <janpeterd@hey.com>",
   "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/carderne/pi-nvim/issues"
-  },
-  "homepage": "https://github.com/carderne/pi-nvim",
+  "homepage": "https://github.com/janpeterd/pinvim",
   "scripts": {
     "fmt": "oxfmt extension.ts",
     "lint": "oxlint index.ts",
-    "check": "tsc --noEmit",
-    "ci:fmt": "oxfmt --check extension.ts",
-    "ci:lint": "npm run lint",
-    "ci:check": "npm run check"
+    "check": "tsc --noEmit"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "^0.61.0"
