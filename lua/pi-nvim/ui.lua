@@ -149,8 +149,8 @@ function M.open(opts)
     end
   end
 
-  -- Start in normal mode (user can press i for insert, v for visual, etc.)
-  -- vim.cmd("noautocmd startinsert!")
+  -- Start in insert mode for immediate typing
+  vim.cmd("noautocmd startinsert!")
 
   local closed = false
 
@@ -202,11 +202,11 @@ function M.open(opts)
 
   local kopts = { buffer = input_buf, noremap = true, silent = true }
 
-  -- Key mappings for all modes
+  -- Key mappings: Enter to submit, Ctrl-C to cancel
+  -- Escape works normally for mode switching (insert<->normal)
   vim.keymap.set("i", "<CR>", send, kopts)
   vim.keymap.set("n", "<CR>", send, kopts)  -- Enter to send in normal mode
-  vim.keymap.set({ "i", "n", "v" }, "<Esc>", close, kopts)
-  vim.keymap.set({ "i", "n", "v" }, "<C-c>", close, kopts)
+  vim.keymap.set({ "i", "n" }, "<C-c>", close, kopts)  -- Ctrl-C to cancel
   vim.keymap.set({ "i", "n" }, "<Tab>", function()
     if not selection then
       send_buffer = not send_buffer

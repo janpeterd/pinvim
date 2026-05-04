@@ -276,8 +276,8 @@ function M.open_input(opts)
   vim.api.nvim_set_hl(0, "PiNvimAnnotationTitle", { fg = accent_hl.fg, bg = normal_hl.bg })
   vim.wo[win].winhl = "NormalFloat:Normal,FloatBorder:PiNvimAnnotationBorder,FloatTitle:PiNvimAnnotationTitle"
 
-  -- Start in normal mode (user can press i for insert, v for visual, etc.)
-  -- vim.cmd("noautocmd startinsert!")
+  -- Start in insert mode for immediate typing
+  vim.cmd("noautocmd startinsert!")
 
   local closed = false
   local close -- forward declaration (LuaJIT needs this before submit captures it)
@@ -300,11 +300,11 @@ function M.open_input(opts)
     pcall(vim.api.nvim_buf_delete, buf, { force = true })
   end
 
-  -- Key mappings for all modes
+  -- Key mappings: Enter to submit, Ctrl-C to cancel
+  -- Escape works normally for mode switching (insert<->normal)
   vim.keymap.set("i", "<CR>", submit, { buffer = buf, noremap = true, silent = true })
   vim.keymap.set("n", "<CR>", submit, { buffer = buf, noremap = true, silent = true })  -- Enter to submit in normal mode
-  vim.keymap.set({ "i", "n", "v" }, "<Esc>", close, { buffer = buf, noremap = true, silent = true })
-  vim.keymap.set({ "i", "n", "v" }, "<C-c>", close, { buffer = buf, noremap = true, silent = true })
+  vim.keymap.set({ "i", "n" }, "<C-c>", close, { buffer = buf, noremap = true, silent = true })
 end
 
 -- Initialize on load
