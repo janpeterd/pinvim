@@ -129,6 +129,10 @@ function M.setup(opts)
       end_line = start_line
     end
     
+    -- Capture filename NOW before opening the input popup
+    local file = vim.fn.expand("%:.")
+    local file_path = vim.fn.expand("%:p")
+    
     -- Check for existing annotation at this line
     local existing = annotations.get_at_line(bufnr, start_line)
     local default_text = existing and existing.text or nil
@@ -139,13 +143,15 @@ function M.setup(opts)
       end_line = end_line,
       default_text = default_text,
       update_id = update_id,
+      file = file,
+      file_path = file_path,
       on_submit = function(text, update_id)
         local item
         if update_id then
-          item = annotations.add(bufnr, start_line, end_line, text, update_id)
+          item = annotations.add(bufnr, start_line, end_line, text, update_id, file, file_path)
           vim.notify(string.format("Annotation [%d] updated at L%d", item.id, start_line), vim.log.levels.INFO)
         else
-          item = annotations.add(bufnr, start_line, end_line, text)
+          item = annotations.add(bufnr, start_line, end_line, text, nil, file, file_path)
           vim.notify(string.format("Annotation [%d] added at L%d", item.id, start_line), vim.log.levels.INFO)
         end
       end,

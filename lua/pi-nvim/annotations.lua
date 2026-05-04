@@ -92,8 +92,10 @@ end
 --- @param end_line number 1-indexed
 --- @param text string
 --- @param update_id number|nil if provided, updates this annotation instead of creating new
+--- @param file string|nil optional relative file path (captured before popup if not provided)
+--- @param file_path string|nil optional absolute file path
 --- @return pi_nvim.Annotation
-function M.add(bufnr, start_line, end_line, text, update_id)
+function M.add(bufnr, start_line, end_line, text, update_id, file, file_path)
   local buf = get_buf_state(bufnr)
   
   -- If updating existing, find and update it
@@ -103,6 +105,9 @@ function M.add(bufnr, start_line, end_line, text, update_id)
         item.text = text
         item.start_line = start_line
         item.end_line = end_line
+        -- Update file info if provided
+        if file then item.file = file end
+        if file_path then item.file_path = file_path end
         -- Recapture code
         local code_lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
         local code = table.concat(code_lines, "\n")
@@ -117,8 +122,9 @@ function M.add(bufnr, start_line, end_line, text, update_id)
   local id = buf.next_id
   buf.next_id = id + 1
 
-  local file = vim.fn.expand("%:.")
-  local file_path = vim.fn.expand("%:p")
+  -- Use provided file paths or capture from buffer
+  local ann_file = file or vim.fn.expand("%:.")
+  local ann_file_path = file_path or vim.fn.expand("%:p")
   local file_type = vim.bo[bufnr].filetype
 
   -- Capture source code for the annotated range (omit if only whitespace)
@@ -132,8 +138,8 @@ function M.add(bufnr, start_line, end_line, text, update_id)
     start_line = start_line,
     end_line = end_line,
     text = text,
-    file = file,
-    file_path = file_path,
+    file = ann_file,
+    file_path = ann_file_path,
     file_type = file_type,
     code = code_field,
   }
@@ -276,7 +282,7 @@ end
 
 --- Open floating input for annotation text.
 --- Called from init.lua command handlers.
---- @param opts { start_line: number, end_line: number, on_submit: fun(text: string), default_text?: string, update_id?: number }
+--- @param opts { start_line: number, end_line: number, on_submit: fun(text: string, update_id?: number), default_text?: string, update_id?: number, file?: string, file_path?: string }
 function M.open_input(opts)
   local width = math.min(60, math.floor(vim.o.columns * 0.4))
   local height = 3
@@ -330,7 +336,7 @@ function M.open_input(opts)
     -- Remove leading and trailing blank lines
     text = text:gsub("^\n+", ""):gsub("\n+$", "")
     if text ~= "" then
-      opts.on_submit(text, opts.update_id)
+      opts.on_submit(text, opts.update_id, opts.file, opts.file_path)
     end
     close()
   end
