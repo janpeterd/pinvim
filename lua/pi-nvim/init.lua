@@ -128,15 +128,29 @@ function M.setup(opts)
       start_line = vim.fn.line(".")
       end_line = start_line
     end
+    
+    -- Check for existing annotation at this line
+    local existing = annotations.get_at_line(bufnr, start_line)
+    local default_text = existing and existing.text or nil
+    local update_id = existing and existing.id or nil
+    
     annotations.open_input({
       start_line = start_line,
       end_line = end_line,
-      on_submit = function(text)
-        local item = annotations.add(bufnr, start_line, end_line, text)
-        vim.notify(string.format("Annotation [%d] added at L%d", item.id, start_line), vim.log.levels.INFO)
+      default_text = default_text,
+      update_id = update_id,
+      on_submit = function(text, update_id)
+        local item
+        if update_id then
+          item = annotations.add(bufnr, start_line, end_line, text, update_id)
+          vim.notify(string.format("Annotation [%d] updated at L%d", item.id, start_line), vim.log.levels.INFO)
+        else
+          item = annotations.add(bufnr, start_line, end_line, text)
+          vim.notify(string.format("Annotation [%d] added at L%d", item.id, start_line), vim.log.levels.INFO)
+        end
       end,
     })
-  end, { range = true, desc = "Annotate current line or visual selection" })
+  end, { range = true, desc = "Annotate current line or visual selection (updates existing)" })
 
   vim.api.nvim_create_user_command("PiAnnotations", function()
     annotations.show_quickfix()

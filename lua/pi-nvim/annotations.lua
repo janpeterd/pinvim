@@ -71,14 +71,49 @@ local function refresh_signs(bufnr)
   end
 end
 
---- Add an annotation to a buffer.
+--- Get annotation at a specific line (for detecting existing annotations).
 --- @param bufnr number
---- @param start_line number  1-indexed
---- @param end_line number    1-indexed
+--- @param line number 1-indexed line
+--- @return pi_nvim.Annotation|nil
+function M.get_at_line(bufnr, line)
+  local buf = state[bufnr]
+  if not buf then return nil end
+  for _, item in ipairs(buf.items) do
+    if line >= item.start_line and line <= item.end_line then
+      return item
+    end
+  end
+  return nil
+end
+
+--- Add an annotation to a buffer, or update existing if id provided.
+--- @param bufnr number
+--- @param start_line number 1-indexed
+--- @param end_line number 1-indexed
 --- @param text string
+--- @param update_id number|nil if provided, updates this annotation instead of creating new
 --- @return pi_nvim.Annotation
-function M.add(bufnr, start_line, end_line, text)
+function M.add(bufnr, start_line, end_line, text, update_id)
   local buf = get_buf_state(bufnr)
+  
+  -- If updating existing, find and update it
+  if update_id then
+    for _, item in ipairs(buf.items) do
+      if item.id == update_id then
+        item.text = text
+        item.start_line = start_line
+        item.end_line = end_line
+        -- Recapture code
+        local code_lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
+        local code = table.concat(code_lines, "\n")
+        item.code = vim.fn.trim(code) ~= "" and code or nil
+        refresh_signs(bufnr)
+        return item
+      end
+    end
+  end
+  
+  -- Create new annotation
   local id = buf.next_id
   buf.next_id = id + 1
 
@@ -241,7 +276,7 @@ end
 
 --- Open floating input for annotation text.
 --- Called from init.lua command handlers.
---- @param opts { start_line: number, end_line: number, on_submit: fun(text: string) }
+--- @param opts { start_line: number, end_line: number, on_submit: fun(text: string), default_text?: string, update_id?: number }
 function M.open_input(opts)
   local width = math.min(60, math.floor(vim.o.columns * 0.4))
   local height = 3
@@ -251,7 +286,10 @@ function M.open_input(opts)
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].filetype = "pi-nvim-annotation"
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "", "" })
+  
+  -- Set default text if provided (for updating existing annotations)
+  local default_lines = opts.default_text and vim.split(opts.default_text, "\n", { plain = true }) or { "", "" }
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, default_lines)
 
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "editor",
@@ -292,7 +330,7 @@ function M.open_input(opts)
     -- Remove leading and trailing blank lines
     text = text:gsub("^\n+", ""):gsub("\n+$", "")
     if text ~= "" then
-      opts.on_submit(text)
+      opts.on_submit(text, opts.update_id)
     end
     close()
   end
