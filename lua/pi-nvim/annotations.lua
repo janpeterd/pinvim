@@ -285,7 +285,9 @@ function M.open_input(opts)
   local function submit()
     if closed then return end
     local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-    local text = vim.fn.trim(table.concat(lines, " "))
+    local text = table.concat(lines, "\n")
+    -- Remove leading and trailing blank lines
+    text = text:gsub("^\n+", ""):gsub("\n+$", "")
     close()
     if text ~= "" then
       opts.on_submit(text)
