@@ -52,10 +52,27 @@ function M.annotations(annotations)
 		table.insert(lines, "### " .. file)
 		table.insert(lines, "")
 		for _, a in ipairs(anns) do
+			-- Format: file:line or file:line-endline
 			local range = a.start_line == a.end_line
-				and string.format("L%d", a.start_line)
-				or string.format("L%d-L%d", a.start_line, a.end_line)
-			table.insert(lines, string.format("**%s**: %s", range, a.text))
+				and string.format("%d", a.start_line)
+				or string.format("%d-%d", a.start_line, a.end_line)
+			local loc = string.format("**%s:%s**", file, range)
+			
+			-- Check if annotation text has multiple lines
+			local is_multiline = a.text:find("\n", 1, true)
+			
+			if is_multiline then
+				-- Multi-line annotation: use blockquote style for clear separation
+				table.insert(lines, loc)
+				-- Prefix each line with > for blockquote
+				for _, line in ipairs(vim.split(a.text, "\n", { plain = true })) do
+					table.insert(lines, "> " .. line)
+				end
+			else
+				-- Single line: keep inline format
+				table.insert(lines, loc .. ": " .. a.text)
+		 end
+			
 			if a.code and vim.fn.trim(a.code) ~= "" then
 				local ft = a.file_type or ""
 				table.insert(lines, "")
