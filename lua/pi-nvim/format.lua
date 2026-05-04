@@ -49,19 +49,28 @@ function M.annotations(annotations)
 	local lines = { "## Annotations from Neovim", "" }
 	for file, anns in pairs(by_file) do
 		table.sort(anns, function(a, b) return a.start_line < b.start_line end)
-		-- Use absolute path if relative is empty
-		local display_file = file
-		if display_file == "" and anns[1] and anns[1].file_path then
-			display_file = anns[1].file_path
+		-- Get file from first annotation in group (prefer relative, fallback to absolute)
+		local group_file = file
+		if group_file == "" and anns[1] and anns[1].file_path then
+			group_file = anns[1].file_path
 		end
-		table.insert(lines, "### " .. (display_file ~= "" and display_file or "(unnamed)"))
+		table.insert(lines, "### " .. (group_file ~= "" and group_file or "(unnamed)"))
 		table.insert(lines, "")
 		for _, a in ipairs(anns) do
+			-- Use per-annotation file (relative or absolute)
+			local ann_file = a.file
+			if ann_file == "" and a.file_path then
+				ann_file = a.file_path
+			end
+			if ann_file == "" then
+				ann_file = "(unnamed)"
+			end
+			
 			-- Format: file:line or file:line-endline
 			local range = a.start_line == a.end_line
 				and string.format("%d", a.start_line)
 				or string.format("%d-%d", a.start_line, a.end_line)
-			local loc = string.format("**%s:%s**", display_file, range)
+			local loc = string.format("**%s:%s**", ann_file, range)
 			
 			-- Check if annotation text has multiple lines
 			local is_multiline = a.text:find("\n", 1, true)
