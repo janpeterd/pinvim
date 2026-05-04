@@ -17,7 +17,7 @@ import * as crypto from "node:crypto";
  *
  * Protocol (newline-delimited JSON over unix socket):
  *
- *   → { "type": "prompt", "message": "..." }
+ *   → { "type": "append-editor", "message": "..." }
  *   → { "type": "annotations", "annotations": [...] }
  *   → { "type": "ping" }
  *
@@ -26,7 +26,7 @@ import * as crypto from "node:crypto";
  *   ← { "ok": false, "error": "..." }
  */
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// -- Types --------------------------------------------------------------------
 
 interface Annotation {
   file: string;
@@ -38,7 +38,7 @@ interface Annotation {
   code?: string;
 }
 
-// ── Socket helpers ───────────────────────────────────────────────────────────
+// -- Socket helpers -----------------------------------------------------------
 
 function cwdHash(cwd: string): string {
   return crypto.createHash("md5").update(cwd).digest("hex").slice(0, 12);
@@ -51,7 +51,7 @@ function getSocketPath(cwd: string): string {
 const SOCKETS_DIR = "/tmp/pi-nvim-sockets";
 const LATEST_LINK = "/tmp/pi-nvim-latest.sock";
 
-// ── Annotation formatting ────────────────────────────────────────────────────
+// -- Annotation formatting ----------------------------------------------------
 
 function formatAnnotations(annotations: Annotation[]): string {
   if (annotations.length === 0) return "";
@@ -86,7 +86,7 @@ function formatAnnotations(annotations: Annotation[]): string {
   return text;
 }
 
-// ── Extension ────────────────────────────────────────────────────────────────
+// -- Extension ----------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
   let server: net.Server | null = null;
@@ -95,7 +95,7 @@ export default function (pi: ExtensionAPI) {
   // Stored annotations received from Neovim (loaded into editor via /nvim-annotations)
   let lastAnnotations: Annotation[] = [];
 
-  // ── Socket server ──────────────────────────────────────────────────────
+  // -- Socket server ------------------------------------------------------
 
   pi.on("session_start", async (_event, ctx) => {
     const cwd = ctx.cwd;
@@ -165,10 +165,8 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      if (msg.type === "prompt" && typeof msg.message === "string") {
-        // Exit kitty's scrollback viewer
-        process.stdout.write("\x1b[?1049h\x1b[?1049l");
-        pi.sendUserMessage(msg.message);
+      if (msg.type === "append-editor" && typeof msg.message === "string") {
+        appendToEditor(msg.message, ctx);
         respond(conn, { ok: true });
         return;
       }
@@ -189,8 +187,11 @@ export default function (pi: ExtensionAPI) {
 
         lastAnnotations = annotations;
 
-        // Pre-fill the pi editor so the user can review before sending
-        tryPreFillEditor(annotations, ctx);
+        // Format and append to pi editor for review before submitting.
+        const formatted = formatAnnotations(annotations);
+        if (formatted) {
+          appendToEditor(formatted, ctx);
+        }
 
         const count = annotations.length;
         respond(conn, {
@@ -208,31 +209,32 @@ export default function (pi: ExtensionAPI) {
   }
 
   /**
-   * Append formatted annotations to the pi editor so the user can
-   * review and edit before pressing Enter. Preserves any existing editor
-   * content (prepends a double newline separator).
-   * Falls back to a notification with instructions to use /nvim-annotations.
+   * Append text to the pi editor, preserving any existing content.
+   * The user reviews and presses Enter to submit.
    */
-  function tryPreFillEditor(annotations: Annotation[], ctx: { ui: any; cwd: string }) {
-    const formatted = formatAnnotations(annotations);
-    if (!formatted) return;
+  function appendToEditor(text: string, ctx: { ui: any; cwd: string }) {
+    if (!text) return;
 
     try {
       const current = ctx.ui.getEditorText();
       const newText = current
-        ? current + "\n\n" + formatted
-        : formatted;
+        ? current + "\n\n" + text
+        : text;
       ctx.ui.setEditorText(newText);
       ctx.ui.notify(
-        `${annotations.length} annotation(s) appended to editor. Review and press Enter to send.`,
+        "Content appended to editor. Review and press Enter to submit.",
         "info",
       );
-    } catch {
-      // If getEditorText/setEditorText fails, notify instead
-      ctx.ui.notify(
-        `${annotations.length} annotation(s) received from Neovim. Use /nvim-annotations to append them to the editor.`,
-        "info",
-      );
+    } catch (err: any) {
+      try {
+        ctx.ui.notify(
+          "Content received from Neovim but could not append to editor: " +
+            (err?.message || String(err)),
+          "error",
+        );
+      } catch {
+        console.error("[pi-nvim] Failed to append to editor:", err);
+      }
     }
   }
 
@@ -265,7 +267,7 @@ export default function (pi: ExtensionAPI) {
 
   process.on("exit", cleanup);
 
-  // ── Commands ────────────────────────────────────────────────────────────
+  // -- Commands ------------------------------------------------------------
 
   pi.registerCommand("pi-nvim-info", {
     description: "Show pi-nvim socket path",
@@ -305,58 +307,61 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // Shared spawn logic (used by /nvim command and ctrl+v shortcut).
+  // Always opens Neovim in a vertical tmux split.
+  async function spawnNvim(
+    fileArgs: string[],
+    ctx: { ui: any; hasUI: boolean },
+  ) {
+    if (!ctx.hasUI) {
+      ctx.ui.notify("/nvim requires interactive mode", "error");
+      return;
+    }
+
+    if (!process.env.TMUX) {
+      ctx.ui.notify(
+        "Not inside a tmux session. Start pi inside tmux first.",
+        "error",
+      );
+      return;
+    }
+
+    const tmuxArgs = ["split-window", "-v"];
+
+    if (fileArgs.length > 0) {
+      tmuxArgs.push("nvim", ...fileArgs);
+    } else {
+      // Default: open Neogit dashboard for reviewing changes
+      // Falls back to plain nvim if Neogit is not installed
+      tmuxArgs.push("nvim", "-c", "Neogit");
+    }
+
+    try {
+      await pi.exec("tmux", tmuxArgs);
+      const target =
+        fileArgs.length > 0 ? fileArgs.join(" ") : "Neogit dashboard";
+      ctx.ui.notify(
+        `Neovim opened in vertical split (${target}). Annotate with :PiAnnotate, close to send.`,
+        "info",
+      );
+    } catch (err: any) {
+      ctx.ui.notify(`Failed to spawn Neovim: ${err.message}`, "error");
+    }
+  }
+
+  pi.registerShortcut("alt+v", {
+    description: "Open Neovim in a vertical tmux split (Neogit dashboard)",
+    handler: async (ctx) => {
+      await spawnNvim([], ctx);
+    },
+  });
+
   pi.registerCommand("nvim", {
     description:
-      "Open Neovim in a tmux split. Defaults to Neogit dashboard to review changes. Use /nvim <file> to open a specific file.",
+      "Open Neovim in a vertical tmux split. Defaults to Neogit dashboard to review changes.",
     handler: async (args, ctx) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("/nvim requires interactive mode", "error");
-        return;
-      }
-
-      if (!process.env.TMUX) {
-        ctx.ui.notify(
-          "Not inside a tmux session. Start pi inside tmux first.",
-          "error",
-        );
-        return;
-      }
-
-      const parts = args.trim().split(/\s+/).filter(Boolean);
-      let vertical = false;
-      const fileArgs: string[] = [];
-
-      for (const part of parts) {
-        if (part === "-v" || part === "--vertical") {
-          vertical = true;
-        } else if (part === "-h" || part === "--horizontal") {
-          vertical = false;
-        } else {
-          fileArgs.push(part);
-        }
-      }
-
-      const tmuxArgs = ["split-window"];
-      tmuxArgs.push(vertical ? "-v" : "-h");
-
-      if (fileArgs.length > 0) {
-        tmuxArgs.push("nvim", ...fileArgs);
-      } else {
-        // Default: open Neogit dashboard for reviewing changes
-        // Falls back to plain nvim if Neogit is not installed
-        tmuxArgs.push("nvim", "-c", "Neogit");
-      }
-
-      try {
-        await pi.exec("tmux", tmuxArgs);
-        const target = fileArgs.length > 0 ? fileArgs.join(" ") : "Neogit dashboard";
-        ctx.ui.notify(
-          `Neovim opened in ${vertical ? "vertical" : "horizontal"} split (${target}). Annotate with :PiAnnotate, close to send.`,
-          "info",
-        );
-      } catch (err: any) {
-        ctx.ui.notify(`Failed to spawn Neovim: ${err.message}`, "error");
-      }
+      const fileArgs = args.trim().split(/\s+/).filter(Boolean);
+      await spawnNvim(fileArgs, ctx);
     },
   });
 }

@@ -86,9 +86,11 @@ function M.add(bufnr, start_line, end_line, text)
   local file_path = vim.fn.expand("%:p")
   local file_type = vim.bo[bufnr].filetype
 
-  -- Capture source code for the annotated range
+  -- Capture source code for the annotated range (omit if only whitespace)
   local code_lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
   local code = table.concat(code_lines, "\n")
+  -- Use nil for blank code so it's omitted from JSON serialization
+  local code_field = vim.fn.trim(code) ~= "" and code or nil
 
   local item = {
     id = id,
@@ -98,7 +100,7 @@ function M.add(bufnr, start_line, end_line, text)
     file = file,
     file_path = file_path,
     file_type = file_type,
-    code = code,
+    code = code_field,
   }
   table.insert(buf.items, item)
 
@@ -210,18 +212,31 @@ function M.serialize_all()
   local result = {}
   for _, buf in pairs(state) do
     for _, item in ipairs(buf.items) do
-      table.insert(result, {
+      local entry = {
         file = item.file,
         filePath = item.file_path,
         startLine = item.start_line,
         endLine = item.end_line,
         text = item.text,
         fileType = item.file_type,
-        code = item.code,
-      })
+      }
+      -- Only include code if non-blank (nil-check in case add was called before this fix)
+      if item.code and vim.fn.trim(item.code) ~= "" then
+        entry.code = item.code
+      end
+      table.insert(result, entry)
     end
   end
   return result
+end
+
+--- Format all annotations as a markdown string (same format as pi extension).
+--- @return string
+function M.format_all_as_markdown()
+  local all = M.get_all()
+  if #all == 0 then return "" end
+  local format = require("pi-nvim.format")
+  return format.annotations(all)
 end
 
 --- Open floating input for annotation text.
@@ -248,7 +263,7 @@ function M.open_input(opts)
     border = "rounded",
     title = " annotate " .. (opts.start_line == opts.end_line
       and string.format("L%d", opts.start_line)
-      : string.format("L%d-L%d", opts.start_line, opts.end_line)),
+      or string.format("L%d-L%d", opts.start_line, opts.end_line)),
     title_pos = "center",
     zindex = 60,
     noautocmd = true,
@@ -264,6 +279,7 @@ function M.open_input(opts)
   vim.cmd("noautocmd startinsert!")
 
   local closed = false
+  local close -- forward declaration (LuaJIT needs this before submit captures it)
 
   local function submit()
     if closed then return end
@@ -275,7 +291,7 @@ function M.open_input(opts)
     end
   end
 
-  local function close()
+  function close()
     if closed then return end
     closed = true
     vim.cmd("noautocmd stopinsert")
@@ -286,72 +302,6 @@ function M.open_input(opts)
   vim.keymap.set("i", "<CR>", submit, { buffer = buf, noremap = true, silent = true })
   vim.keymap.set({ "i", "n" }, "<Esc>", close, { buffer = buf, noremap = true, silent = true })
   vim.keymap.set({ "i", "n" }, "<C-c>", close, { buffer = buf, noremap = true, silent = true })
-end
-
---- Send annotations to pi (fire-and-forget, for VimLeavePre).
---- Uses a blocking-ish approach via vim.uv pipe without waiting for response.
---- @param cb fun(success: boolean)|nil
-function M.send_to_pi(cb)
-  local all = M.get_all()
-  if #all == 0 then
-    if cb then cb(true) end
-    return
-  end
-
-  local pi = require("pi-nvim")
-  local sock_path = pi.get_socket_path()
-  if not sock_path then
-    if cb then cb(false) end
-    return
-  end
-
-  local payload = vim.json.encode({
-    type = "annotations",
-    annotations = M.serialize_all(),
-  }) .. "\n"
-
-  local client = vim.uv.new_pipe(false)
-  if not client then
-    if cb then cb(false) end
-    return
-  end
-
-  client:connect(sock_path, function(err)
-    if err then
-      if cb then vim.schedule(function() cb(false) end) end
-      return
-    end
-
-    client:write(payload, function(write_err)
-      if write_err then
-        client:close()
-        if cb then vim.schedule(function() cb(false) end) end
-        return
-      end
-
-      -- Wait briefly for the response, then close
-      local buf = ""
-      client:read_start(function(read_err, data)
-        if read_err then
-          client:close()
-          if cb then vim.schedule(function() cb(false) end) end
-          return
-        end
-        if data then
-          buf = buf .. data
-          if buf:find("\n") then
-            client:read_stop()
-            client:close()
-            if cb then vim.schedule(function() cb(true) end) end
-          end
-        else
-          -- EOF
-          client:close()
-          if cb then vim.schedule(function() cb(true) end) end
-        end
-      end)
-    end)
-  end)
 end
 
 -- Initialize on load

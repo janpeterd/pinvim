@@ -182,36 +182,22 @@ function M.open(opts)
     local prompt_text = vim.fn.trim(table.concat(lines, "\n"))
     close()
 
-    local message
+    local prompt = require("pi-nvim.prompt")
+
     if selection then
-      local header = string.format("%s lines %d-%d", selection.file, selection.start_line, selection.end_line)
-      if prompt_text == "" then
-        message = string.format("Look at this code from %s:\n\n```%s\n%s\n```", header, selection.ft, selection.text)
-      else
-        message = string.format("%s\n\nFrom %s:\n```%s\n%s\n```", prompt_text, header, selection.ft, selection.text)
-      end
+      prompt.append_selection(selection.file, selection.text, selection.ft, selection.start_line, selection.end_line)
     elseif send_buffer and rel_file ~= "" then
       local content = table.concat(buf_lines, "\n")
-      if prompt_text == "" then
-        message = string.format("Look at this file %s:\n\n```%s\n%s\n```", rel_file, ft, content)
-      else
-        message = string.format("%s\n\nFile: %s\n```%s\n%s\n```", prompt_text, rel_file, ft, content)
-      end
+      prompt.append_file(rel_file, content, ft)
     elseif file ~= "" then
-      if prompt_text == "" then
-        message = string.format("Look at this file: %s", file)
-      else
-        message = string.format("File: %s\n\n%s", file, prompt_text)
-      end
-    else
-      if prompt_text == "" then
-        vim.notify("Nothing to send", vim.log.levels.WARN)
-        return
-      end
-      message = prompt_text
+      prompt.append_file(rel_file or file, "", ft)
     end
 
-    pi.prompt(message)
+    if prompt_text ~= "" then
+      prompt.append_prompt(prompt_text)
+    end
+
+    prompt.open()
   end
 
   local kopts = { buffer = input_buf, noremap = true, silent = true }

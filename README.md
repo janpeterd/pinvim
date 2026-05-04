@@ -72,53 +72,60 @@ Start pi inside tmux. The pi extension automatically opens a socket on session s
 
 ### Pi commands
 
-| Command | Description |
-|---|---|
-| `/nvim` | Open Neovim in a tmux split (defaults to Neogit dashboard) |
-| `/nvim <file>` | Open Neovim with a specific file |
-| `/nvim -v <file>` | Open in a vertical split |
-| `/nvim-annotations` | Load received annotations into the editor for review |
-| `/pi-nvim-info` | Show socket path |
+| Command             | Description                                                |
+| ------------------- | ---------------------------------------------------------- |
+| `/nvim`             | Open Neovim in a tmux split (defaults to vertical, Neogit dashboard) |
+| `/nvim <file>`      | Open Neovim with a specific file                           |
+| `/nvim -h <file>`   | Open in a horizontal split (also `--horizontal`)           |
+| `/nvim -v <file>`   | Explicit vertical split (also `--vertical`, this is the default) |
+| `Alt+V`             | Shortcut to open Neovim (same as `/nvim`, vertical split)  |
+| `/nvim-annotations` | Load received annotations into the editor for review       |
+| `/pi-nvim-info`     | Show socket path                                           |
+
+> **Tip:** Annotations are auto-appended to pi's editor when Neovim closes — you can review and edit them before pressing Enter. Use `/nvim-annotations` to manually reload them later.
 
 ### Neovim commands
 
 **Prompt/context (existing):**
 
-| Command | Description |
-|---|---|
-| `:Pi` | Open the Send to pi dialog (normal + visual mode) |
-| `:PiSend` | Type a prompt and send to pi |
-| `:PiSendFile` | Send current file path + prompt |
-| `:PiSendSelection` | Send visual selection + prompt |
-| `:PiSendBuffer` | Send entire buffer + prompt |
-| `:PiPing` | Check if pi is reachable |
-| `:PiSessions` | List/switch between running pi sessions |
+| Command            | Description                                                                    |
+| ------------------ | ------------------------------------------------------------------------------ |
+| `:Pi`              | Open the Send to pi dialog (normal + visual mode)                              |
+| `:PiSend`          | Type a prompt and send to pi                                                   |
+| `:PiSendFile`      | Send current file path + prompt                                                |
+| `:PiSendSelection` | Send visual selection + prompt                                                 |
+| `:PiSendBuffer`    | Send entire buffer + prompt                                                    |
+| `:PiPing`          | Check if pi is reachable                                                       |
+| `:PiSessions`      | List/switch between running pi sessions (interactive picker with session info) |
 
 **Annotation system (new):**
 
-| Command | Description |
-|---|---|
-| `:PiAnnotate` | Annotate current line or visual selection (opens floating input) |
-| `:PiAnnotations` | Show all annotations in a quickfix list |
-| `:PiClearAnnotation <id>` | Remove annotation by ID from current buffer |
-| `:PiClearAllAnnotations` | Remove all annotations from all buffers |
-| `:PiSendAnnotations` | Manually send annotations to pi |
+| Command                   | Description                                                      |
+| ------------------------- | ---------------------------------------------------------------- |
+| `:PiAnnotate`             | Annotate current line or visual selection (opens floating input) |
+| `:PiAnnotations`          | Show all annotations in a quickfix list                          |
+| `:PiClearAnnotation <id>` | Remove annotation by ID from current buffer                      |
+| `:PiClearAllAnnotations`  | Remove all annotations from all buffers                          |
+| `:PiSendAnnotations`      | Manually send annotations to pi                                  |
 
 ### Keybindings
 
-| Key | Command | Description |
-|-----|---------|-------------|
-| `<leader>p` | `:Pi` | Open send dialog |
-| `<leader>pa` | `:PiAnnotate` | Annotate line (normal) or selection (visual) |
-| `<leader>pl` | `:PiAnnotations` | List annotations in quickfix |
-| `<leader>ps` | `:PiSendAnnotations` | Send annotations to pi |
-| `<leader>pc` | `:PiClearAllAnnotations` | Clear all annotations |
+| Key           | Command                  | Description                                                            |
+| ------------- | ------------------------ | ---------------------------------------------------------------------- |
+| `<leader>pp`  | `:PiAnnotate`            | Annotate line (normal) or selection (visual)                           |
+| `<leader>ps`  | `:PiSend` / `:Pi`        | Send prompt (normal: simple input; visual: dialog with selection)      |
+| `<leader>pf`  | `:PiSendFile`            | Send current file to pi with a prompt                                  |
+| `<leader>pb`  | `:PiSendBuffer`          | Send entire buffer to pi with a prompt                                 |
+| `<leader>pP`  | `:PiSessions`            | Pi session picker                                                      |
+| `<leader>pl`  | `:PiAnnotations`         | List annotations in quickfix                                           |
+| `<leader>pa`  | `:PiSendAnnotations`     | Send annotations to pi                                                 |
+| `<leader>pc`  | `:PiClearAllAnnotations` | Clear all annotations                                                  |
 
 ### Annotation system
 
 Annotations use **signs in the gutter** (a ▶ marker) — your code files are never modified. When you annotate:
 
-1. Place cursor on a line (or select a range in visual mode) and press `<leader>pa`
+1. Place cursor on a line (or select a range in visual mode) and press `<leader>pp`
 2. A floating input appears — type your annotation text and press Enter
 3. A ▶ sign appears in the gutter for each annotated line
 4. Annotations persist across buffer switches within the same Neovim session
@@ -133,7 +140,7 @@ Opens a floating window in the center of the screen:
 
 - Shows the current **file name** (always sent)
 - Shows **annotation count** if you have pending annotations
-- If you had a **visual selection**, it shows the line range and sends the selected text
+- If you had a **visual selection**, it shows the line range, highlights the selection in the source buffer while the dialog is open, and sends the selected text
 - If no selection, you can press **Tab** to toggle sending the **entire buffer**
 - Type a prompt and press **Enter** to send (or just Enter with no prompt)
 - Press **Esc** or **Ctrl-C** to cancel
@@ -166,15 +173,9 @@ This means you can also send prompts from any tool:
 echo '{"type":"prompt","message":"hello"}' | socat - UNIX-CONNECT:/tmp/pi-nvim-sockets/<hash>.sock
 ```
 
-## Additional keybindings (optional)
+### Automatic file reloading
 
-```lua
-vim.keymap.set("n", "<leader>pp", ":PiSend<CR>")
-vim.keymap.set("n", "<leader>pf", ":PiSendFile<CR>")
-vim.keymap.set("v", "<leader>ps", ":PiSendSelection<CR>")
-vim.keymap.set("n", "<leader>pb", ":PiSendBuffer<CR>")
-vim.keymap.set("n", "<leader>pi", ":PiPing<CR>")
-```
+The Neovim plugin enables `autoread` and polls for file changes every second while a pi session is reachable. This means if pi edits files on disk, Neovim auto-reloads them — no need to manually `:e` after every change.
 
 ## License
 
