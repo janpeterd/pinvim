@@ -149,8 +149,8 @@ function M.open(opts)
     end
   end
 
-  -- Start in insert mode
-  vim.cmd("noautocmd startinsert!")
+  -- Start in normal mode (user can press i for insert, v for visual, etc.)
+  -- vim.cmd("noautocmd startinsert!")
 
   local closed = false
 
@@ -202,9 +202,11 @@ function M.open(opts)
 
   local kopts = { buffer = input_buf, noremap = true, silent = true }
 
+  -- Key mappings for all modes
   vim.keymap.set("i", "<CR>", send, kopts)
-  vim.keymap.set({ "i", "n" }, "<Esc>", close, kopts)
-  vim.keymap.set({ "i", "n" }, "<C-c>", close, kopts)
+  vim.keymap.set("n", "<CR>", send, kopts)  -- Enter to send in normal mode
+  vim.keymap.set({ "i", "n", "v" }, "<Esc>", close, kopts)
+  vim.keymap.set({ "i", "n", "v" }, "<C-c>", close, kopts)
   vim.keymap.set({ "i", "n" }, "<Tab>", function()
     if not selection then
       send_buffer = not send_buffer
@@ -212,8 +214,8 @@ function M.open(opts)
     end
   end, kopts)
 
-  -- Resize window as text is typed
-  vim.api.nvim_create_autocmd({ "TextChangedI", "TextChanged" }, {
+  -- Resize window as text is typed or cursor moves
+  vim.api.nvim_create_autocmd({ "TextChangedI", "TextChanged", "CursorMoved", "WinScrolled" }, {
     buffer = input_buf,
     callback = resize_input,
   })
