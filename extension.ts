@@ -5,7 +5,8 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 
 /**
- * pi-nvim: Bridge between pi coding agent and Neovim.
+ * pinvim: Bridge between pi coding agent and Neovim.
+ * https://github.com/janpeterd/pinvim
  *
  * Features:
  *   - Unix socket server so Neovim can send prompts/annotations into pi
